@@ -23,7 +23,6 @@ bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 # Define tus paquetes de puntos aquí con precio en centavos (USD)
 # NOTA: Asegúrate de que esta definición de POINT_PACKAGES esté sincronizada con la de points_handlers.py en tu bot
 POINT_PACKAGES = {
-    "p1": {"label": "1 puntos", "amount": 50, "points": 1},
     "p200": {"label": "500 puntos", "amount": 399, "points": 500},
     "p500": {"label": "2000 puntos", "amount": 999, "points": 2000},
     "p1000": {"label": "5000 puntos", "amount": 1999, "points": 5000}
