@@ -1,11 +1,14 @@
+import os
+import logging
+import json 
+from datetime import datetime
+
+from supabase import create_client, Client
+from dotenv import load_dotenv
+from telegram import Bot # Importa Bot para enviar mensajes de confirmación
 from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.responses import JSONResponse
 import stripe
-import os
-import database  # Asegúrate de que este módulo maneja una DB en la nube (ej., Supabase)
-from dotenv import load_dotenv
-from telegram import Bot # Importa Bot para enviar mensajes de confirmación
-import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -74,6 +77,8 @@ async def crear_sesion(request: Request):
     try:
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
+            # ✅ AÑADIDO: Habilitar métodos de pago automáticos para mejor compatibilidad (ej. 3D Secure para Visa)
+            automatic_payment_methods={"enabled": True}, 
             line_items=[{
                 "price_data": {
                     "currency": "usd",
@@ -105,7 +110,7 @@ async def crear_sesion(request: Request):
 async def stripe_webhook(request: Request, stripe_signature: str = Header(None, alias="Stripe-Signature")):
     """
     Endpoint que recibe webhooks de Stripe.
-    Es llamado por Stripe cuando ocurren eventos como 'checkout.session.completed'.
+    Es llamado por Stripe cuando ocurren eventos como 'checkout.session.completed' o 'payment_intent.payment_failed'.
     """
     payload = await request.body()
 
@@ -118,30 +123,24 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
         logging.error(f"Error de procesamiento de payload del webhook de Stripe: {e}")
         raise HTTPException(status_code=400, detail="Payload inválido")
     
-    # --- CAMBIO 3: INICIO DE LA LÓGICA DE FILTRADO POR METADATA DENTRO DEL WEBHOOK ---
-    # Si el evento es de tipo 'checkout.session.completed', verificamos el metadata 'project'.
-    # Si el evento no tiene el metadata 'project' o no coincide con este backend, lo ignoramos.
+    # --- Lógica de filtrado por metadata 'project' ---
+    # Esto se aplica a todos los eventos que contengan metadata de sesión.
+    session_metadata = event["data"]["object"].get("metadata", {})
+    event_project = session_metadata.get("project")
+
+    if event_project and event_project != PROJECT_IDENTIFIER:
+        logging.info(f"Webhook recibido para el proyecto '{event_project}', pero este backend es '{PROJECT_IDENTIFIER}'. Ignorando evento.")
+        return JSONResponse(status_code=200, content={"status": "ignored", "reason": "project_mismatch"})
+    # --- Fin de la lógica de filtrado ---
+
+    # Manejar el evento de sesión de checkout completada
     if event["type"] == "checkout.session.completed":
-        session_metadata = event["data"]["object"].get("metadata", {})
-        event_project = session_metadata.get("project")
-
-        # Verifica si el identificador del proyecto en el metadata del evento
-        # NO coincide con el identificador de ESTE backend.
-        if event_project != PROJECT_IDENTIFIER:
-            logging.info(f"Webhook recibido para el proyecto '{event_project}', pero este backend es '{PROJECT_IDENTIFIER}'. Ignorando evento.")
-            # Es crucial devolver un 200 OK para que Stripe no reintente el envío.
-            return JSONResponse(status_code=200, content={"status": "ignored", "reason": "project_mismatch"})
-    # --- FIN DE LA LÓGICA DE FILTRADO POR METADATA ---
-
-    # El resto del código del webhook solo se ejecuta si el filtro pasó (es decir, el evento es para este proyecto)
-    # Handle checkout session completed event
-    if event["type"] == "checkout.session.completed": # Esta condición se repite, pero es para claridad después del filtro.
         session = event["data"]["object"]
         metadata = session.get("metadata", {})
-        user_id_str = metadata.get("telegram_user_id") # Leer como string
+        user_id_str = metadata.get("telegram_user_id") 
         package_id = metadata.get("package_id")
-        points_awarded = metadata.get("points_awarded") # Puntos a otorgar
-        priority_boost = metadata.get("priority_boost") # ⬅️ Recupera el 'priority_boost'
+        points_awarded = metadata.get("points_awarded") 
+        priority_boost = metadata.get("priority_boost") 
 
         # Convierte user_id a int de forma segura
         try:
@@ -167,7 +166,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
         if user_id is not None and package_id in POINT_PACKAGES:
             try:
                 # Actualiza los puntos del usuario
-                # Asegúrate de que tu database.py para Monkeyvideos usa la tabla correcta (ej. "users")
+                import database # Importa database aquí si no está globalmente accesible en este contexto
                 database.update_user_points(user_id, points_awarded)
                 logging.info(f"Usuario {user_id} recibió {points_awarded} puntos por compra en Stripe.")
 
@@ -193,8 +192,36 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
         else:
             logging.warning(f"Webhook recibido pero metadata incompleta o inválida: user_id={user_id_str}, package_id={package_id}")
 
-    # Puedes manejar otros tipos de eventos de Stripe aquí si es necesario
-    # elif event["type"] == "payment_intent.succeeded":
-    #     logging.info("¡Payment Intent exitoso!")
+    # ✅ AÑADIDO: Manejo del evento payment_intent.payment_failed
+    elif event["type"] == "payment_intent.payment_failed":
+        payment_intent = event["data"]["object"]
+        last_payment_error = payment_intent.get("last_payment_error")
+        
+        decline_code = None
+        decline_message = None
+        if last_payment_error:
+            decline_code = last_payment_error.get("decline_code")
+            decline_message = last_payment_error.get("message")
+        
+        # Recuperar user_id del metadata si está disponible en el PaymentIntent
+        # (Esto depende de si el metadata de la sesión de checkout se propaga al PaymentIntent)
+        user_id_from_pi = payment_intent.get("metadata", {}).get("telegram_user_id", "N/A")
+
+        logging.warning(f"💳 Pago fallido para PaymentIntent {payment_intent.get('id')}. "
+                        f"Usuario: {user_id_from_pi}. "
+                        f"Código de rechazo: {decline_code}. "
+                        f"Mensaje: '{decline_message}'.")
+        
+        # Opcional: Notificar al usuario a través de Telegram sobre el pago fallido
+        if bot and user_id_from_pi != "N/A":
+            try:
+                await bot.send_message(
+                    chat_id=int(user_id_from_pi),
+                    text=f"❌ Tu pago ha fallado. Por favor, revisa los detalles de tu tarjeta o intenta con otro método de pago. "
+                         f"Detalles: '{decline_message}' (Código: {decline_code}).",
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as e:
+                logging.error(f"Error al notificar al usuario {user_id_from_pi} sobre pago fallido: {e}")
 
     return JSONResponse(status_code=200, content={"status": "ok"})
