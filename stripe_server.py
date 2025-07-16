@@ -76,8 +76,7 @@ async def crear_sesion(request: Request):
 
     try:
         session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            # ✅ AÑADIDO: Habilitar métodos de pago automáticos para mejor compatibilidad (ej. 3D Secure para Visa)
+                        # ✅ AÑADIDO: Habilitar métodos de pago automáticos para mejor compatibilidad (ej. 3D Secure para Visa)
             automatic_payment_methods={"enabled": True}, 
             line_items=[{
                 "price_data": {
