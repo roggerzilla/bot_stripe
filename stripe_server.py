@@ -87,6 +87,7 @@ async def crear_sesion(request: Request):
             mode="payment",
             success_url="https://t.me/monkeyvideosbot",  # URL de éxito para este bot
             cancel_url="https://t.me/monkeyvideosbot",   # URL de cancelación para este bot
+            allow_promotion_codes=True,
             metadata={
                 "telegram_user_id": user_id,
                 "package_id": paquete_id,
