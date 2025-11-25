@@ -45,7 +45,7 @@ POINT_PACKAGES = {
 
 # --- CAMBIO 1: Define el identificador único para este proyecto ---
 # Esto es crucial para el filtrado de webhooks.
-PROJECT_IDENTIFIER = "monkeyvideos2" # <--- ¡IMPORTANTE! Este es el identificador para el backend de "Monkeyvideos"
+PROJECT_IDENTIFIER = "monkeyvideos4_bot" # <--- ¡IMPORTANTE! Este es el identificador para el backend de "Monkeyvideos"
 
 @app.post("/crear-sesion")
 async def crear_sesion(request: Request):
@@ -85,8 +85,8 @@ async def crear_sesion(request: Request):
                 "quantity": 1
             }],
             mode="payment",
-            success_url="https://t.me/monkeyvideos2bot",  # URL de éxito para este bot
-            cancel_url="https://t.me/monkeyvideos2bot",   # URL de cancelación para este bot
+            success_url="https://t.me/monkeyvideos4_bot",  # URL de éxito para este bot
+            cancel_url="https://t.me/monkeyvideos4_bot",   # URL de cancelación para este bot
             allow_promotion_codes=True,
             metadata={
                 "telegram_user_id": user_id,
