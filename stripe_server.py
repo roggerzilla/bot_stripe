@@ -33,49 +33,35 @@ if not bot:
     logging.warning("BOT_TOKEN no configurado en el backend de Stripe. Los mensajes de confirmación no se pueden enviar a Telegram.")
 
 
-# Define tus paquetes de puntos aquí con el precio en centavos
-# ⬅️ AÑADIMOS 'priority_boost' y 'currency' a cada paquete.
+# Define tus paquetes de puntos aquí con el precio en centavos (USD)
+# ⬅️ AÑADIMOS 'priority_boost' a cada paquete.
 # Valores 'priority_boost' MÁS BAJOS indican MAYOR prioridad.
-# Moneda por defecto: USD (dólares americanos)
+# Asegúrate de que esta definición de POINT_PACKAGES esté sincronizada con points_handlers.py en tu bot
 POINT_PACKAGES = {
-    "p200": {"label": "500 points", "amount": 399, "points": 500, "priority_boost": 1, "currency": "usd"},
-    "p500": {"label": "2000 points", "amount": 999, "points": 2000, "priority_boost": 1, "currency": "usd"},
-    "p1000": {"label": "5000 points", "amount": 1999, "points": 5000, "priority_boost": 1, "currency": "usd"}
+    # 3.99 USD (aprox 70.00 MXN) -> 7000 centavos de Peso
+    "p200": {"label": "500 points", "amount": 8000, "points": 500, "priority_boost": 1}, 
+    # 9.99 USD (aprox 175.00 MXN) -> 17500 centavos de Peso
+    "p500": {"label": "2000 points", "amount": 18000, "points": 2000, "priority_boost": 1}, 
+    # 19.99 USD (aprox 350.00 MXN) -> 35000 centavos de Peso
+    "p1000": {"label": "5000 points", "amount": 40000, "points": 5000, "priority_boost": 1}
 }
-
-# --- Define el identificador único para este proyecto ---
+# --- CAMBIO 1: Define el identificador único para este proyecto ---
 # Esto es crucial para el filtrado de webhooks.
-PROJECT_IDENTIFIER = "Fuk69videosbot"  # <--- ¡IMPORTANTE! Este es el identificador para el backend
-
-# URL de tu bot para redirecciones después del pago
-BOT_SUCCESS_URL = "https://t.me/Fuk69videosbot"
-BOT_CANCEL_URL = "https://t.me/Fuk69videosbot"
-
+PROJECT_IDENTIFIER = "monkeyimagenesbot" # <--- ¡IMPORTANTE! Este es el identificador para el backend de "Monkeyvideos"
 
 @app.post("/crear-sesion")
 async def crear_sesion(request: Request):
     """
     Endpoint para crear una sesión de pago de Stripe.
     Llamado desde tu bot de Telegram.
-    
-    Acepta los siguientes campos del bot:
-    - telegram_user_id: ID del usuario de Telegram
-    - paquete_id: ID del paquete (p200, p500, p1000)
-    - priority_boost: Nivel de prioridad (opcional)
-    - currency: Moneda (opcional, por defecto usa la del paquete o "usd")
-    - amount: Monto en centavos (opcional, por defecto usa el del paquete)
-    - project: Identificador del proyecto (opcional)
     """
     data = await request.json()
     user_id = str(data.get("telegram_user_id"))
     paquete_id = data.get("paquete_id")
-    priority_boost = data.get("priority_boost")
-    
-    # ⬅️ NUEVO: Recibir currency y amount del bot (si vienen)
-    currency_from_bot = data.get("currency")  # Puede ser "usd", "mxn", etc.
-    amount_from_bot = data.get("amount")      # Monto en centavos
+    # ⬅️ Recibimos el 'priority_boost' del bot
+    priority_boost = data.get("priority_boost") 
 
-    # Validación básica
+    # Validación
     if not user_id or paquete_id not in POINT_PACKAGES:
         logging.error(f"Datos inválidos en /crear-sesion: user_id={user_id}, paquete_id={paquete_id}")
         return JSONResponse(status_code=400, content={"error": "Datos inválidos: user_id o package_id incorrecto."})
@@ -86,19 +72,14 @@ async def crear_sesion(request: Request):
         return JSONResponse(status_code=400, content={"error": "Datos inválidos: priority_boost debe ser un entero."})
 
     paquete = POINT_PACKAGES[paquete_id]
-    
-    # ⬅️ NUEVO: Usar moneda y monto del bot si vienen, si no usar los del paquete
-    final_currency = currency_from_bot if currency_from_bot else paquete.get("currency", "usd")
-    final_amount = int(amount_from_bot) if amount_from_bot else paquete["amount"]
-    
-    logging.info(f"Creando sesión: usuario={user_id}, paquete={paquete_id}, moneda={final_currency}, monto={final_amount}")
 
     try:
         session = stripe.checkout.Session.create(
+            
             line_items=[{
                 "price_data": {
-                    "currency": final_currency,   # ⬅️ Moneda dinámica (usd, mxn, etc.)
-                    "unit_amount": final_amount,  # ⬅️ Monto dinámico en centavos
+                    "currency": "mxn",
+                    "unit_amount": paquete["amount"],
                     "product_data": {
                         "name": paquete["label"]
                     }
@@ -106,26 +87,22 @@ async def crear_sesion(request: Request):
                 "quantity": 1
             }],
             mode="payment",
-            success_url=BOT_SUCCESS_URL,
-            cancel_url=BOT_CANCEL_URL,
             allow_promotion_codes=True,
+            success_url="https://t.me/monkeyimagenesbot",  # URL de éxito para este bot
+            cancel_url="https://t.me/monkeyimagenesbot",   # URL de cancelación para este bot
             metadata={
                 "telegram_user_id": user_id,
                 "package_id": paquete_id,
-                "points_awarded": paquete["points"],
-                "priority_boost": priority_boost,
-                "project": PROJECT_IDENTIFIER
+                "points_awarded": paquete["points"], # También útil para el webhook
+                "priority_boost": priority_boost,    # ⬅️ Pasamos el 'priority_boost' en el metadata
+                "project": PROJECT_IDENTIFIER        # <--- CAMBIO 2: AÑADIDO: Identificador del proyecto
             }
         )
-        logging.info(f"Sesión de Stripe creada para el usuario {user_id}, paquete {paquete_id}, moneda {final_currency}. URL: {session.url}")
+        logging.info(f"Sesión de Stripe creada para el usuario {user_id}, paquete {paquete_id}. URL: {session.url}")
         return {"url": session.url}
-    except stripe.error.StripeError as e:
-        logging.error(f"Error de Stripe al crear la sesión: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={"error": f"Error de Stripe: {str(e)}"})
     except Exception as e:
         logging.error(f"Error al crear la sesión de Stripe para el usuario {user_id}, paquete {paquete_id}: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": f"Error interno al crear la sesión: {str(e)}"})
-
 
 @app.post("/webhook/stripe")
 async def stripe_webhook(request: Request, stripe_signature: str = Header(None, alias="Stripe-Signature")):
@@ -144,8 +121,9 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
         logging.error(f"Error de procesamiento de payload del webhook de Stripe: {e}")
         raise HTTPException(status_code=400, detail="Payload inválido")
     
-    # --- LÓGICA DE FILTRADO POR METADATA ---
+    # --- CAMBIO 3: INICIO DE LA LÓGICA DE FILTRADO POR METADATA DENTRO DEL WEBHOOK ---
     # Si el evento es de tipo 'checkout.session.completed', verificamos el metadata 'project'.
+    # Si el evento no tiene el metadata 'project' o no coincide con este backend, lo ignoramos.
     if event["type"] == "checkout.session.completed":
         session_metadata = event["data"]["object"].get("metadata", {})
         event_project = session_metadata.get("project")
@@ -154,16 +132,19 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
         # NO coincide con el identificador de ESTE backend.
         if event_project != PROJECT_IDENTIFIER:
             logging.info(f"Webhook recibido para el proyecto '{event_project}', pero este backend es '{PROJECT_IDENTIFIER}'. Ignorando evento.")
+            # Es crucial devolver un 200 OK para que Stripe no reintente el envío.
             return JSONResponse(status_code=200, content={"status": "ignored", "reason": "project_mismatch"})
+    # --- FIN DE LA LÓGICA DE FILTRADO POR METADATA ---
 
-    # --- PROCESAR CHECKOUT COMPLETADO ---
-    if event["type"] == "checkout.session.completed":
+    # El resto del código del webhook solo se ejecuta si el filtro pasó (es decir, el evento es para este proyecto)
+    # Handle checkout session completed event
+    if event["type"] == "checkout.session.completed": # Esta condición se repite, pero es para claridad después del filtro.
         session = event["data"]["object"]
         metadata = session.get("metadata", {})
-        user_id_str = metadata.get("telegram_user_id")
+        user_id_str = metadata.get("telegram_user_id") # Leer como string
         package_id = metadata.get("package_id")
-        points_awarded = metadata.get("points_awarded")
-        priority_boost = metadata.get("priority_boost")
+        points_awarded = metadata.get("points_awarded") # Puntos a otorgar
+        priority_boost = metadata.get("priority_boost") # ⬅️ Recupera el 'priority_boost'
 
         # Convierte user_id a int de forma segura
         try:
@@ -177,61 +158,46 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None, 
             points_awarded = int(points_awarded)
         except (ValueError, TypeError):
             logging.error(f"Webhook: points_awarded inválido o faltante en metadata: {points_awarded}")
-            points_awarded = 0
+            points_awarded = 0 # O maneja como error si es crítico
 
         # Convierte priority_boost a int de forma segura
         try:
             priority_boost = int(priority_boost)
         except (ValueError, TypeError):
             logging.warning(f"Webhook: priority_boost inválido o faltante en metadata: {priority_boost}. Usando prioridad por defecto (2).")
-            priority_boost = 2
+            priority_boost = 2 # Usa prioridad por defecto si no se puede convertir
 
         if user_id is not None and package_id in POINT_PACKAGES:
             try:
                 # Actualiza los puntos del usuario
+                # Asegúrate de que tu database.py para Monkeyvideos usa la tabla correcta (ej. "users")
                 database.update_user_points(user_id, points_awarded)
                 logging.info(f"Usuario {user_id} recibió {points_awarded} puntos por compra en Stripe.")
 
-                # Actualiza la prioridad del usuario
+                # ⬅️ Actualiza la prioridad del usuario
+                # Solo actualizamos si la nueva prioridad es "mejor" (numéricamente menor)
                 database.update_user_priority(user_id, priority_boost)
                 logging.info(f"Prioridad del usuario {user_id} actualizada a {priority_boost} (if better).")
 
                 # Envía mensaje de confirmación al usuario de Telegram
-                if bot:
+                if bot: # Solo intenta enviar si el bot se inicializó correctamente
                     try:
                         await bot.send_message(
                             chat_id=user_id,
-                            text=f"🎉 <b>¡Recarga exitosa!</b>\n\n"
-                                 f"✅ <b>{points_awarded}</b> puntos han sido añadidos a tu cuenta.\n"
-                                 f"⚡ Tu prioridad en la cola es ahora <b>{priority_boost}</b> (1=Más alta).\n\n"
-                                 f"¡Gracias por tu compra! 💜",
+                            text=f"🎉 **¡Recarga exitosa!** <b>{points_awarded}</b> puntos han sido añadidos a tu cuenta. Tu prioridad en la cola es ahora <b>{priority_boost}</b> (0=Más alta).",
                             parse_mode="HTML"
                         )
                     except Exception as e:
                         logging.error(f"Error al enviar mensaje de confirmación de Telegram para {user_id}: {e}")
                 else:
-                    logging.warning("Advertencia: Bot de Telegram no inicializado en el backend de Stripe.")
+                    logging.warning("Advertencia: Bot de Telegram no inicializado en el backend de Stripe (¿TOKEN faltante?). No se pudo enviar la confirmación.")
             except Exception as e:
                 logging.error(f"Error al actualizar puntos/prioridad o enviar confirmación para {user_id}: {e}", exc_info=True)
         else:
             logging.warning(f"Webhook recibido pero metadata incompleta o inválida: user_id={user_id_str}, package_id={package_id}")
 
+    # Puedes manejar otros tipos de eventos de Stripe aquí si es necesario
+    # elif event["type"] == "payment_intent.succeeded":
+    #     logging.info("¡Payment Intent exitoso!")
+
     return JSONResponse(status_code=200, content={"status": "ok"})
-
-
-@app.get("/")
-async def root():
-    """Endpoint de salud para verificar que el servidor está funcionando."""
-    return {"status": "ok", "message": "Stripe Backend running", "project": PROJECT_IDENTIFIER}
-
-
-@app.get("/health")
-async def health_check():
-    """Endpoint de health check para monitoreo."""
-    return {
-        "status": "healthy",
-        "stripe_configured": bool(stripe.api_key),
-        "webhook_secret_configured": bool(STRIPE_WEBHOOK_SECRET),
-        "bot_configured": bool(bot),
-        "project": PROJECT_IDENTIFIER
-    }
